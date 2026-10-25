@@ -3,6 +3,7 @@ package io.github.geovannymcode.openpayments.httpsignatures
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 /** Canonicalización de campos de RFC 9421 §2.1, con los ejemplos de esa sección. */
 class FieldCanonicalizationTest {
@@ -19,8 +20,8 @@ class FieldCanonicalizationTest {
         ),
     )
 
-    private fun line(fieldName: String): String =
-        SignatureBase.of(request, listOf(Component.Field(fieldName)), SignatureParameters()).value.lines().first()
+    private fun line(fieldName: String, target: HttpRequest = request): String =
+        SignatureBase.of(target, listOf(Component.Field(fieldName)), SignatureParameters()).value.lines().first()
 
     @Test
     fun should_trim_leading_and_trailing_whitespace() {
@@ -55,6 +56,24 @@ class FieldCanonicalizationTest {
     @Test
     fun should_reject_missing_field() {
         assertFailsWith<IllegalArgumentException> { line("x-missing") }
+    }
+
+    @Test
+    fun should_reject_covered_field_with_non_ascii_characters() {
+        val accented = HttpRequest("GET", "https://example.com/", HttpHeaders.of("X-Description" to "Café en Barranquilla"))
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            SignatureBase.of(accented, listOf(Component.Field("x-description")), SignatureParameters())
+        }
+        assertTrue("x-description" in error.message.orEmpty())
+        assertTrue(";bs" in error.message.orEmpty())
+    }
+
+    @Test
+    fun should_ignore_non_ascii_fields_that_are_not_covered() {
+        val accented = request.withHeader("X-Description", "Café")
+
+        assertEquals("\"x-ows-header\": Leading and trailing whitespace.", line("x-ows-header", accented))
     }
 
     @Test

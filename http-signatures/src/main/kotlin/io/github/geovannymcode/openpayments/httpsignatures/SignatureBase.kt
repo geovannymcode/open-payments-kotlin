@@ -19,8 +19,17 @@ public class SignatureBase private constructor(
     public val signatureParams: String,
     public val value: String,
 ) {
-    /** Bytes UTF-8 de [value], que son la entrada del [Signer]. */
-    public fun toByteArray(): ByteArray = value.encodeToByteArray()
+    /**
+     * Bytes US-ASCII de [value], que son la entrada del [Signer].
+     *
+     * Se codifica a mano en lugar de usar `Charsets.US_ASCII`, que es `java.nio.charset` y no
+     * existe fuera de la JVM. [of] ya garantiza que todo carácter es ASCII.
+     */
+    public fun toByteArray(): ByteArray = ByteArray(value.length) { index ->
+        val char = value[index]
+        check(char.code < 0x80) { "La signature base contiene un carácter no ASCII en la posición $index" }
+        char.code.toByte()
+    }
 
     override fun toString(): String = value
 
@@ -31,7 +40,9 @@ public class SignatureBase private constructor(
          * Construye la signature base de [request] cubriendo [components] en ese orden.
          *
          * @throws IllegalArgumentException si un componente se repite, si un campo cubierto no
-         * existe en la petición o si algún valor contiene saltos de línea.
+         * existe en la petición, si el valor de un campo contiene saltos de línea o caracteres no
+         * ASCII (la codificación con `;bs` de §2.1.3 está fuera de alcance), o si el valor
+         * normalizado de un componente derivado no es ASCII imprimible (§2.2).
          */
         public fun of(
             request: HttpRequest,
@@ -47,9 +58,6 @@ public class SignatureBase private constructor(
             val value = buildString {
                 components.forEach { component ->
                     val componentValue = component.valueIn(request)
-                    require('\n' !in componentValue && '\r' !in componentValue) {
-                        "El valor de ${component.name} contiene saltos de línea"
-                    }
                     append(StructuredFields.string(component.name)).append(": ").append(componentValue).append('\n')
                 }
                 append(StructuredFields.string(SIGNATURE_PARAMS)).append(": ").append(signatureParams)
@@ -59,7 +67,7 @@ public class SignatureBase private constructor(
 
         private fun Component.valueIn(request: HttpRequest): String {
             val target = request.target
-            return when (this) {
+            val derivedValue = when (this) {
                 Component.Method -> request.method
                 Component.TargetUri -> target.targetUri
                 Component.Authority -> target.authority
@@ -70,8 +78,28 @@ public class SignatureBase private constructor(
                 is Component.Field -> {
                     val values = request.headers.values(name)
                     require(values.isNotEmpty()) { "La petición no tiene el campo cubierto '$name'" }
-                    canonicalizeFieldValues(values)
+                    val fieldValue = canonicalizeFieldValues(values)
+                    requireValidFieldValue(name, fieldValue)
+                    return fieldValue
                 }
+            }
+            requireValidDerivedValue(name, derivedValue)
+            return derivedValue
+        }
+
+        /** Un campo canonicalizado admite ASCII visible, espacio y tabulador (RFC 9110 §5.5). */
+        private fun requireValidFieldValue(name: String, value: String) {
+            require('\n' !in value && '\r' !in value) { "El valor del campo $name contiene saltos de línea" }
+            require(value.all { it == '\t' || it in ' '..'~' }) {
+                "El valor del campo $name contiene caracteres no ASCII; la codificación de valores no " +
+                    "ASCII (parámetro ;bs de RFC 9421 §2.1.3) está fuera de alcance en esta versión"
+            }
+        }
+
+        /** Un componente derivado ya normalizado solo admite caracteres imprimibles y espacios (§2.2). */
+        private fun requireValidDerivedValue(name: String, value: String) {
+            require(value.all { it in ' '..'~' }) {
+                "El valor normalizado de $name debe ser ASCII imprimible: '$value'"
             }
         }
     }

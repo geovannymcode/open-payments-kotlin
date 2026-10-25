@@ -1,6 +1,7 @@
 package io.github.geovannymcode.openpayments.httpsignatures
 
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
@@ -29,6 +30,13 @@ class SignatureBaseTest {
         val base = SignatureBase.of(request, emptyList(), SignatureParameters(created = 1))
 
         assertEquals("\"@signature-params\": ();created=1", base.value)
+    }
+
+    @Test
+    fun should_encode_signature_base_as_us_ascii() {
+        val base = SignatureBase.of(request, listOf(Component.Field("date")), SignatureParameters(created = 1))
+
+        assertContentEquals(base.value.map { it.code.toByte() }.toByteArray(), base.toByteArray())
     }
 
     @Test

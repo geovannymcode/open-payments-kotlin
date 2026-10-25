@@ -3,6 +3,7 @@ package io.github.geovannymcode.openpayments.httpsignatures
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class DerivedComponentsTest {
     private fun valueOf(component: Component, uri: String, method: String = "GET"): String {
@@ -21,6 +22,26 @@ class DerivedComponentsTest {
             "https://www.example.com/path?param=value",
             valueOf(Component.TargetUri, "https://www.example.com/path?param=value#section"),
         )
+    }
+
+    @Test
+    fun should_keep_explicit_default_port_in_target_uri_but_omit_it_in_authority() {
+        assertEquals("https://example.com:443/resource", valueOf(Component.TargetUri, "https://example.com:443/resource"))
+        assertEquals("example.com", valueOf(Component.Authority, "https://example.com:443/resource"))
+
+        assertEquals("http://example.com:80/x", valueOf(Component.TargetUri, "http://example.com:80/x"))
+        assertEquals("example.com", valueOf(Component.Authority, "http://example.com:80/x"))
+    }
+
+    @Test
+    fun should_omit_port_in_target_uri_and_authority_when_uri_has_none() {
+        assertEquals("https://example.com/resource", valueOf(Component.TargetUri, "https://example.com/resource"))
+        assertEquals("example.com", valueOf(Component.Authority, "https://example.com/resource"))
+    }
+
+    @Test
+    fun should_normalize_scheme_and_host_and_strip_userinfo_in_target_uri() {
+        assertEquals("https://example.com:8443/a?b=c", valueOf(Component.TargetUri, "HTTPS://user@Example.COM:8443/a?b=c"))
     }
 
     @Test
@@ -82,5 +103,25 @@ class DerivedComponentsTest {
         assertFailsWith<IllegalArgumentException> { HttpRequest("GET", "/incoming-payments") }
         assertFailsWith<IllegalArgumentException> { HttpRequest("GET", "https:///path") }
         assertFailsWith<IllegalArgumentException> { HttpRequest("GET", "https://example.com:abc/") }
+    }
+
+    @Test
+    fun should_reject_uri_with_path_or_query_not_percent_encoded() {
+        val pathError = assertFailsWith<IllegalArgumentException> { HttpRequest("GET", "https://example.test/café") }
+        assertFailsWith<IllegalArgumentException> { HttpRequest("GET", "https://example.test/search?q=año") }
+        assertFailsWith<IllegalArgumentException> { HttpRequest("GET", "https://example.test/a b") }
+
+        assertTrue("percent-encoded" in pathError.message.orEmpty())
+        assertEquals("/caf%C3%A9", valueOf(Component.Path, "https://example.test/caf%C3%A9"))
+    }
+
+    @Test
+    fun should_validate_derived_values_after_normalization() {
+        val request = HttpRequest("GET", "https://CAFÉ.example/")
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            SignatureBase.of(request, listOf(Component.Authority), SignatureParameters())
+        }
+        assertTrue("@authority" in error.message.orEmpty())
     }
 }
