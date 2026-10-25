@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "es-ES"
+reviews:
+  profile: "assertive"
+  auto_approvals:
+    enabled: false
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "^develop$"
+      - "^main$"
+  path_instructions:
+    - path: "**/*.kt"
+      instructions: |
+        Librería pública: toda API expuesta debe tener visibilidad y tipo de retorno explícitos, y KDoc.
+        El módulo http-signatures implementa RFC 9421. Señala cualquier desviación de la especificación.
+        Señala cualquier dependencia de runtime nueva en http-signatures: ese módulo debe quedar sin dependencias.
+        Señala uso de java.* que impida portar a Kotlin Multiplatform.
