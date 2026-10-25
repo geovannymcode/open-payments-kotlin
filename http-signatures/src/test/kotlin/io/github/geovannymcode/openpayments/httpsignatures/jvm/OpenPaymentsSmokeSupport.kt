@@ -26,6 +26,20 @@ internal object OpenPaymentsSmoke {
 
     private val ERROR_CODE = Regex("[a-z_]{1,64}")
 
+    /** Base64 DER header shared by every PKCS#8 Ed25519 private key (RFC 8410), not secret by itself. */
+    private const val PKCS8_ED25519_BASE64_PREFIX = "MC4CAQAwBQYDK2VwBCIEI"
+
+    /**
+     * Detects values that are explicitly private key material: a PEM private key block or a
+     * Base64-encoded PKCS#8 Ed25519 key.
+     *
+     * It deliberately does not judge by decoded Base64 length: a legitimate `kid` can be valid
+     * Base64 of any size. Whether the `kid` is published and matches the private key is checked
+     * against the JWKS by the integration test's key registration preflight.
+     */
+    fun looksLikeKeyMaterial(value: String): Boolean =
+        "PRIVATE KEY" in value || value.trim().startsWith(PKCS8_ED25519_BASE64_PREFIX)
+
     /**
      * Construye un GET de descubrimiento (wallet address o su JWKS), con [REQUEST_TIMEOUT] explícito
      * para que un servidor que no responde no deje el test colgado.

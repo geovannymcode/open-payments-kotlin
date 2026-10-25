@@ -1,6 +1,7 @@
 package io.github.geovannymcode.openpayments.httpsignatures.jvm
 
 import kotlinx.serialization.json.Json
+import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -198,5 +199,34 @@ class OpenPaymentsSmokeSupportTest {
         val outcome = runCatching { OpenPaymentsSmoke.grantFailure(200, "[".repeat(10_000) + "]".repeat(10_000)) }
 
         assertTrue(outcome.isFailure || outcome.getOrNull() != null, "Un anidamiento extremo no puede validar un grant")
+    }
+
+    /**
+     * Regression: a legitimate `kid` may be valid Base64 whose decoded length is 32 or 48 bytes,
+     * the sizes of an Ed25519 seed and of a PKCS#8 key. Length alone must not flag it as a secret.
+     */
+    @Test
+    fun should_not_flag_valid_base64_key_ids_as_key_material() {
+        val keyIds = listOf(
+            Base64.encode(ByteArray(32) { it.toByte() }),
+            Base64.encode(ByteArray(48) { (it * 7).toByte() }),
+            Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT).encode(ByteArray(32) { (255 - it).toByte() }),
+            "df82aaec-bc35-4e53-bbe6-6c91f8e46b87",
+            "test-key-ed25519",
+        )
+
+        keyIds.forEach { keyId -> assertFalse(OpenPaymentsSmoke.looksLikeKeyMaterial(keyId), "False positive for key id: $keyId") }
+    }
+
+    /** Explicit private key material is still detected, including with surrounding whitespace. */
+    @Test
+    fun should_flag_pem_and_pkcs8_ed25519_private_keys() {
+        // RFC 9421 appendix B.1.4 test key: public test vector, not a credential.
+        val pkcs8 = "MC4CAQAwBQYDK2VwBCIEIJ+DYvh6SEqVTm50DFtMDoQikTmiCqirVv9mWG9qfSnF"
+        val pem = "-----BEGIN PRIVATE KEY-----\n$pkcs8\n-----END PRIVATE KEY-----"
+
+        listOf(pkcs8, "  $pkcs8\n", pem).forEach { value ->
+            assertTrue(OpenPaymentsSmoke.looksLikeKeyMaterial(value), "Private key material was not detected")
+        }
     }
 }

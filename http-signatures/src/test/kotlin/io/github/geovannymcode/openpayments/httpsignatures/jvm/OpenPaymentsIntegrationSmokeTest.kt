@@ -56,12 +56,11 @@ class OpenPaymentsIntegrationSmokeTest {
     fun should_accept_signed_incoming_payment_grant_request() {
         val walletAddress = requiredEnv("OP_WALLET_ADDRESS").let(::toUrl)
         val keyId = requiredEnv("OP_KEY_ID")
-        // El keyid viaja en Signature-Input: si por error contiene la llave privada, se detiene aquí
-        // sin mostrar el valor.
+        // The keyid travels in Signature-Input: stop here, without echoing the value, if it holds a private key.
         assertFalse(
-            looksLikeKeyMaterial(keyId),
-            "OP_KEY_ID parece contener una llave privada, no un key id. Usa el 'kid' de la llave en el " +
-                "test wallet (por ejemplo un UUID). No se muestra el valor; si llegó a imprimirse, rota la llave.",
+            OpenPaymentsSmoke.looksLikeKeyMaterial(keyId),
+            "OP_KEY_ID looks like a private key, not a key id. Use the key's 'kid' from the test wallet " +
+                "(for example a UUID). The value is not shown; if it was ever printed, rotate the key.",
         )
         val privateKeyPath = requiredEnv("OP_PRIVATE_KEY_PATH")
 
@@ -159,13 +158,6 @@ class OpenPaymentsIntegrationSmokeTest {
         return KeyFactory.getInstance("Ed25519").generatePublic(X509EncodedKeySpec(spkiPrefix + raw))
     }
 
-    /** Detecta PEM, PKCS#8 en base64 o una semilla de 32 bytes en base64. */
-    private fun looksLikeKeyMaterial(value: String): Boolean {
-        if ("PRIVATE KEY" in value || value.startsWith(PKCS8_ED25519_BASE64_PREFIX)) return true
-        val decodedSize = runCatching { Base64.decode(value).size }.getOrNull()
-        return decodedSize == 32 || decodedSize == 48
-    }
-
     /** Lee una variable obligatoria; si falta, salta la prueba en lugar de fallar, para que CI siga verde. */
     private fun requiredEnv(name: String): String {
         val value = System.getenv(name)
@@ -176,9 +168,4 @@ class OpenPaymentsIntegrationSmokeTest {
     /** Acepta tanto la URL como el payment pointer (`$wallet.example/alice`). */
     private fun toUrl(walletAddress: String): String =
         if (walletAddress.startsWith("$")) "https://${walletAddress.substring(1)}" else walletAddress
-
-    private companion object {
-        /** Cabecera DER de una llave privada Ed25519 PKCS#8, codificada en base64. */
-        const val PKCS8_ED25519_BASE64_PREFIX = "MC4CAQAwBQYDK2VwBCIEI"
-    }
 }
