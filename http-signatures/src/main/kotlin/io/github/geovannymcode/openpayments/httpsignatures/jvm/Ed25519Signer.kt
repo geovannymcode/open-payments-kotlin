@@ -59,8 +59,10 @@ public class Ed25519Signer private constructor(private val privateKey: PrivateKe
             val base64 = trimmed.removePrefix(PEM_HEADER).removeSuffix(PEM_FOOTER).filterNot { it.isWhitespace() }
             val der = try {
                 Base64.decode(base64)
-            } catch (e: IllegalArgumentException) {
-                throw IllegalArgumentException("El contenido PEM no es base64 válido", e)
+            } catch (_: IllegalArgumentException) {
+                // El mensaje del decodificador cita símbolos y posiciones de la entrada, que aquí es la
+                // llave privada: no se propaga ni como mensaje ni como causa.
+                throw IllegalArgumentException("El contenido PEM no es base64 válido")
             }
             return fromPkcs8(der)
         }
@@ -87,6 +89,10 @@ public class Ed25519Signer private constructor(private val privateKey: PrivateKe
             return Ed25519Signer(privateKey)
         }
 
+        /**
+         * Construye la llave a partir de un `PrivateKeyInfo` PKCS#8 en DER y comprueba que sea Ed25519.
+         * Los errores del proveedor JCA se traducen a [IllegalArgumentException], el contrato público.
+         */
         private fun fromPkcs8(der: ByteArray): Ed25519Signer {
             val key = try {
                 KeyFactory.getInstance(ALGORITHM).generatePrivate(PKCS8EncodedKeySpec(der))

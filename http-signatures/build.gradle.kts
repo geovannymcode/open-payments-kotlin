@@ -19,6 +19,8 @@ java {
 dependencies {
     // RFC 9421 sin dependencias de runtime: solo se permiten dependencias de test.
     testImplementation(libs.kotlin.test)
+    // Solo para leer respuestas JSON en el smoke test de Open Payments; no llega al runtime.
+    testImplementation(libs.kotlinx.serialization.json)
 }
 
 tasks.test {
@@ -36,6 +38,8 @@ tasks.register<Test>("integrationTest") {
     useJUnitPlatform {
         includeTags("integration")
     }
+    // Rutas relativas como OP_PRIVATE_KEY_PATH=.secrets/private.key se resuelven desde la raíz del repo.
+    workingDir = rootDir
     // Depende de la red y de credenciales externas: nunca se considera al día.
     outputs.upToDateWhen { false }
     testLogging {
