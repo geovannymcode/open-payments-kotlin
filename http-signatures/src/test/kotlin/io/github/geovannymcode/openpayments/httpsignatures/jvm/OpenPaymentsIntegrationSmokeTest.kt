@@ -19,7 +19,6 @@ import java.nio.file.Path
 import java.security.KeyFactory
 import java.security.PublicKey
 import java.security.spec.X509EncodedKeySpec
-import java.time.Duration
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -42,11 +41,7 @@ import java.net.http.HttpRequest as JdkHttpRequest
  */
 @Tag("integration")
 class OpenPaymentsIntegrationSmokeTest {
-    private val client: HttpClient = HttpClient.newBuilder()
-        // HTTP/1.1 garantiza que el JDK envíe Content-Length, que es un componente cubierto.
-        .version(HttpClient.Version.HTTP_1_1)
-        .connectTimeout(Duration.ofSeconds(15))
-        .build()
+    private val client: HttpClient = OpenPaymentsSmoke.newHttpClient()
 
     /**
      * Descubre el auth server desde la wallet address, verifica que la llave esté registrada y pide
@@ -54,7 +49,7 @@ class OpenPaymentsIntegrationSmokeTest {
      */
     @Test
     fun should_accept_signed_incoming_payment_grant_request() {
-        val walletAddress = requiredEnv("OP_WALLET_ADDRESS").let(::toUrl)
+        val walletAddress = requiredEnv("OP_WALLET_ADDRESS").let(OpenPaymentsSmoke::normalizeWalletAddress)
         val keyId = requiredEnv("OP_KEY_ID")
         // The keyid travels in Signature-Input: stop here, without echoing the value, if it holds a private key.
         assertFalse(
@@ -101,12 +96,16 @@ class OpenPaymentsIntegrationSmokeTest {
         println("Firma aceptada; grant de incoming-payment aprobado con access token (no se imprime).")
     }
 
-    /** Obtiene `authServer` de la wallet address; no se hardcodea porque depende del tenant. */
+    /**
+     * Fetches `authServer` from the wallet address, since it depends on the tenant, and requires it
+     * to be HTTPS before the signed request is sent there.
+     */
     private fun fetchAuthServer(walletAddress: String): String {
         val response = client.send(OpenPaymentsSmoke.discoveryRequest(walletAddress), HttpResponse.BodyHandlers.ofString())
         assertEquals(200, response.statusCode(), "GET $walletAddress devolvió ${response.statusCode()}")
         val walletDocument = OpenPaymentsSmoke.parseJson(response.body()) as? JsonObject
-        return assertNotNull(walletDocument?.stringField("authServer"), "La wallet address no publica authServer")
+        val authServer = assertNotNull(walletDocument?.stringField("authServer"), "The wallet address does not publish authServer")
+        return OpenPaymentsSmoke.requireHttpsAuthServer(authServer)
     }
 
     /**
@@ -164,8 +163,4 @@ class OpenPaymentsIntegrationSmokeTest {
         assumeTrue(!value.isNullOrBlank(), "Falta la variable de entorno $name; se salta la prueba de integración")
         return value!!
     }
-
-    /** Acepta tanto la URL como el payment pointer (`$wallet.example/alice`). */
-    private fun toUrl(walletAddress: String): String =
-        if (walletAddress.startsWith("$")) "https://${walletAddress.substring(1)}" else walletAddress
 }

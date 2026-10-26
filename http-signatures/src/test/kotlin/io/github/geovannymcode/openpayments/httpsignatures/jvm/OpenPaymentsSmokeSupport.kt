@@ -7,6 +7,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.net.URI
+import java.net.URISyntaxException
+import java.net.http.HttpClient
 import java.time.Duration
 import java.net.http.HttpRequest as JdkHttpRequest
 
@@ -39,6 +41,71 @@ internal object OpenPaymentsSmoke {
      */
     fun looksLikeKeyMaterial(value: String): Boolean =
         "PRIVATE KEY" in value || value.trim().startsWith(PKCS8_ED25519_BASE64_PREFIX)
+
+    /** Connection timeout of the smoke test HTTP client. */
+    val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(15)
+
+    /**
+     * Builds the HTTP client used by the smoke test.
+     *
+     * Redirects are never followed, explicitly rather than relying on the JDK default: a 3xx from
+     * the wallet address, the JWKS or the auth server could send the signed request, and later the
+     * access token, to plain HTTP. A 3xx is returned as is and fails the test like any other
+     * non-200 status. HTTP/1.1 guarantees that the JDK sends Content-Length, a covered component.
+     */
+    fun newHttpClient(): HttpClient =
+        HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .connectTimeout(CONNECT_TIMEOUT)
+            .build()
+
+    /**
+     * Normalizes and validates a wallet address before any request is sent to it.
+     *
+     * A payment pointer (`$wallet.example/alice`) becomes `https://wallet.example/alice`. The result
+     * must be an absolute `https` URL with a valid host and without user info, explicit port, query
+     * or fragment, which is the form Open Payments wallet addresses take.
+     *
+     * @throws IllegalArgumentException if the address does not meet those rules. The message never
+     * echoes the value, since its user info could embed credentials.
+     */
+    fun normalizeWalletAddress(walletAddress: String): String {
+        val trimmed = walletAddress.trim()
+        val candidate = if (trimmed.startsWith("$")) "https://${trimmed.substring(1)}" else trimmed
+        val uri = parseHttpsUri(candidate, label = "Wallet address")
+        require(uri.rawUserInfo == null) { "Wallet address must not contain user info" }
+        require(uri.port == -1) { "Wallet address must not contain an explicit port" }
+        require(uri.rawQuery == null) { "Wallet address must not contain a query" }
+        require(uri.rawFragment == null) { "Wallet address must not contain a fragment" }
+        return candidate
+    }
+
+    /**
+     * Validates the `authServer` published by a wallet address before a signed request is sent to it.
+     *
+     * It must be an absolute `https` URI with a valid host and without embedded credentials. Path
+     * and query are kept untouched, since the auth server may need them (for example a tenant path).
+     *
+     * @throws IllegalArgumentException if the URI does not meet those rules; the value is not echoed.
+     */
+    fun requireHttpsAuthServer(authServer: String): String {
+        val uri = parseHttpsUri(authServer, label = "authServer")
+        require(uri.rawUserInfo == null) { "authServer must not contain embedded credentials" }
+        return authServer
+    }
+
+    /** Parses [value] with [URI] and requires an absolute `https` URI with a non-blank host. */
+    private fun parseHttpsUri(value: String, label: String): URI {
+        val uri = try {
+            URI(value)
+        } catch (_: URISyntaxException) {
+            throw IllegalArgumentException("$label is not a valid URI")
+        }
+        require(uri.isAbsolute && uri.scheme.equals("https", ignoreCase = true)) { "$label must use https" }
+        require(!uri.host.isNullOrBlank()) { "$label must have a valid host" }
+        return uri
+    }
 
     /**
      * Construye un GET de descubrimiento (wallet address o su JWKS), con [REQUEST_TIMEOUT] explícito

@@ -1,9 +1,11 @@
 package io.github.geovannymcode.openpayments.httpsignatures.jvm
 
 import kotlinx.serialization.json.Json
+import java.net.http.HttpClient
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -228,5 +230,94 @@ class OpenPaymentsSmokeSupportTest {
         listOf(pkcs8, "  $pkcs8\n", pem).forEach { value ->
             assertTrue(OpenPaymentsSmoke.looksLikeKeyMaterial(value), "Private key material was not detected")
         }
+    }
+
+    /** A valid wallet address is returned unchanged. */
+    @Test
+    fun should_accept_https_wallet_address() {
+        assertEquals("https://ilp.interledger-test.dev/alice", OpenPaymentsSmoke.normalizeWalletAddress("https://ilp.interledger-test.dev/alice"))
+    }
+
+    /** Payment pointers resolve to the `https` URL of the same host and path. */
+    @Test
+    fun should_normalize_payment_pointer_to_https() {
+        assertEquals("https://ilp.interledger-test.dev/alice", OpenPaymentsSmoke.normalizeWalletAddress("\$ilp.interledger-test.dev/alice"))
+    }
+
+    /** Plain HTTP would send the signed request and the access token without TLS. */
+    @Test
+    fun should_reject_non_https_wallet_addresses() {
+        listOf("http://ilp.example/alice", "HTTP://ilp.example/alice", "ftp://ilp.example/alice", "ilp.example/alice", "//ilp.example/alice")
+            .forEach { address -> assertRejected("Wallet address must use https") { OpenPaymentsSmoke.normalizeWalletAddress(address) } }
+    }
+
+    /** A wallet address must name a host; an empty or registry-only authority does not. */
+    @Test
+    fun should_reject_wallet_address_without_valid_host() {
+        listOf("https:///alice", "https://:443/alice", "https:alice", "\$/alice")
+            .forEach { address -> assertRejected("Wallet address must have a valid host") { OpenPaymentsSmoke.normalizeWalletAddress(address) } }
+    }
+
+    /** Malformed input is rejected with a fixed message, without echoing the value. */
+    @Test
+    fun should_reject_malformed_wallet_address() {
+        assertRejected("Wallet address is not a valid URI") { OpenPaymentsSmoke.normalizeWalletAddress("https://ilp.example/a lice") }
+    }
+
+    /** Open Payments wallet addresses carry no user info, explicit port, query or fragment. */
+    @Test
+    fun should_reject_wallet_address_with_user_info_port_query_or_fragment() {
+        val cases = mapOf(
+            "https://user:secret@ilp.example/alice" to "Wallet address must not contain user info",
+            "https://ilp.example:443/alice" to "Wallet address must not contain an explicit port",
+            "https://ilp.example:8443/alice" to "Wallet address must not contain an explicit port",
+            "https://ilp.example/alice?x=1" to "Wallet address must not contain a query",
+            "https://ilp.example/alice?" to "Wallet address must not contain a query",
+            "https://ilp.example/alice#me" to "Wallet address must not contain a fragment",
+        )
+
+        cases.forEach { (address, message) -> assertRejected(message) { OpenPaymentsSmoke.normalizeWalletAddress(address) } }
+    }
+
+    /** The tenant path and any query the auth server publishes are kept as published. */
+    @Test
+    fun should_accept_https_auth_server_unchanged() {
+        listOf(
+            "https://auth.interledger-test.dev/f537937b-7016-481b-b655-9f0d1014822c",
+            "https://auth.example:8443/tenant?region=eu",
+        ).forEach { authServer -> assertEquals(authServer, OpenPaymentsSmoke.requireHttpsAuthServer(authServer)) }
+    }
+
+    /** The signed grant request must never be sent to an auth server over plain HTTP. */
+    @Test
+    fun should_reject_http_auth_server() {
+        assertRejected("authServer must use https") { OpenPaymentsSmoke.requireHttpsAuthServer("http://auth.example/") }
+    }
+
+    /** An auth server without host or with embedded credentials is rejected without echoing it. */
+    @Test
+    fun should_reject_auth_server_without_host_or_with_credentials() {
+        assertRejected("authServer must have a valid host") { OpenPaymentsSmoke.requireHttpsAuthServer("https:///tenant") }
+        assertRejected("authServer must not contain embedded credentials") {
+            OpenPaymentsSmoke.requireHttpsAuthServer("https://admin:secret@auth.example/")
+        }
+    }
+
+    /**
+     * Redirects are disabled, so an HTTPS response redirecting to HTTP is returned as a 3xx and
+     * fails, instead of being followed; `grantFailure` rejects any 3xx.
+     */
+    @Test
+    fun should_not_follow_redirects_from_https_to_http() {
+        assertEquals(HttpClient.Redirect.NEVER, OpenPaymentsSmoke.newHttpClient().followRedirects())
+        assertEquals(OpenPaymentsSmoke.CONNECT_TIMEOUT, OpenPaymentsSmoke.newHttpClient().connectTimeout().orElse(null))
+        assertNotNull(OpenPaymentsSmoke.grantFailure(302, ""))
+    }
+
+    /** Asserts that [block] fails with exactly [message] and that the message never leaks a secret. */
+    private fun assertRejected(message: String, block: () -> Unit) {
+        val error = assertFailsWith<IllegalArgumentException>(message, block)
+        assertEquals(message, error.message)
+        assertFalse("secret" in error.message.orEmpty(), "Rejection messages must not echo credentials")
     }
 }
